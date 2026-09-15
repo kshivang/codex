@@ -35,14 +35,16 @@ use tokio_stream::wrappers::WatchStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 
 use super::TuiEvent;
+use super::palette_refresh::PaletteEvent;
+use super::palette_refresh::PaletteRefresh;
 use super::size_monitor::SizeMonitor;
 
 /// Result type produced by an event source.
-pub type EventResult = std::io::Result<Event>;
+pub(crate) type EventResult = std::io::Result<PaletteEvent>;
 
 /// Abstraction over a source of terminal events. Allows swapping in a fake for tests.
 /// Value in production is [`CrosstermEventSource`].
-pub trait EventSource: Send + 'static {
+pub(crate) trait EventSource: Send + 'static {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<EventResult>>;
 }
 
@@ -50,7 +52,7 @@ pub trait EventSource: Send + 'static {
 /// is reused so all streams still see the same input source.
 ///
 /// This intermediate layer enables dropping/recreating the underlying EventStream (pause/resume) without rebuilding consumers.
-pub struct EventBroker<S: EventSource = CrosstermEventSource> {
+pub(crate) struct EventBroker<S: EventSource = CrosstermEventSource> {
     state: Mutex<EventBrokerState<S>>,
     resume_events_tx: watch::Sender<()>,
     pub(super) size_monitor: Option<SizeMonitor>,
@@ -125,11 +127,17 @@ impl<S: EventSource + Default> EventBroker<S> {
 }
 
 /// Real crossterm-backed event source.
-pub struct CrosstermEventSource(pub crossterm::event::EventStream);
+pub struct CrosstermEventSource {
+    events: crossterm::event::ColorEventStream,
+    palette: PaletteRefresh,
+}
 
 impl Default for CrosstermEventSource {
     fn default() -> Self {
-        Self(crossterm::event::EventStream::new())
+        Self {
+            events: crossterm::event::EventStream::with_color_reports(),
+            palette: Default::default(),
+        }
     }
 }
 
@@ -140,7 +148,23 @@ impl EventSource for CrosstermEventSource {
         #[cfg(windows)]
         let _ = super::windows_console::ensure_input_record_mode();
 
-        let result = Pin::new(&mut self.get_mut().0).poll_next(cx);
+        let source = self.get_mut();
+        let result = loop {
+            match Pin::new(&mut source.events).poll_next(cx) {
+                Poll::Ready(Some(Ok(event))) => {
+                    if let Some(event) = source.palette.observe(
+                        event,
+                        std::time::Instant::now(),
+                        &mut std::io::stdout(),
+                    ) {
+                        break Poll::Ready(Some(Ok(event)));
+                    }
+                }
+                Poll::Ready(Some(Err(error))) => break Poll::Ready(Some(Err(error))),
+                Poll::Ready(None) => break Poll::Ready(None),
+                Poll::Pending => break Poll::Pending,
+            }
+        };
 
         // EventStream starts its blocking reader before returning Pending, so reassert the mode
         // after that transition as well.
@@ -160,7 +184,7 @@ impl EventSource for CrosstermEventSource {
 /// does not support fan-out. Multiple TuiEventStream instances can exist during the app lifetime
 /// (for nested or sequential screens), but only one should be polled at a time,
 /// otherwise one instance can consume ("steal") input events and the other will miss them.
-pub struct TuiEventStream<S: EventSource + Default + Unpin = CrosstermEventSource> {
+pub(crate) struct TuiEventStream<S: EventSource + Default + Unpin = CrosstermEventSource> {
     broker: Arc<EventBroker<S>>,
     draw_stream: BroadcastStream<()>,
     resume_stream: WatchStream<()>,
@@ -239,7 +263,14 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
                 }
             };
 
-            if let Some(mapped) = poll_result.and_then(|event| self.map_crossterm_event(event)) {
+            let mapped = match poll_result {
+                Some(PaletteEvent::Input(event)) => self.map_crossterm_event(event),
+                Some(PaletteEvent::Colors(colors)) => {
+                    crate::terminal_palette::update_default_colors(colors).then_some(TuiEvent::Draw)
+                }
+                None => None,
+            };
+            if let Some(mapped) = mapped {
                 return Poll::Ready(Some(mapped));
             }
         }
@@ -293,8 +324,6 @@ impl<S: EventSource + Default + Unpin> TuiEventStream<S> {
             Event::Paste(pasted) => Some(TuiEvent::Paste(pasted)),
             Event::FocusGained => {
                 self.terminal_focused.store(true, Ordering::Relaxed);
-                // Keep the startup-cached palette: querying terminal colors here blocks the
-                // input loop, and a direct probe would discard keys typed during the refresh.
                 Some(TuiEvent::FocusGained)
             }
             Event::FocusLost => {
@@ -382,7 +411,7 @@ mod tests {
             Self { broker }
         }
 
-        fn send(&self, event: EventResult) {
+        fn send(&self, event: std::io::Result<Event>) {
             let mut state = self
                 .broker
                 .state
@@ -391,7 +420,7 @@ mod tests {
             let Some(source) = state.active_event_source_mut() else {
                 return;
             };
-            let _ = source.tx.send(event);
+            let _ = source.tx.send(event.map(PaletteEvent::Input));
         }
     }
 

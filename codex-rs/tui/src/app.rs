@@ -857,6 +857,10 @@ impl App {
         {
             return Ok(AppRunControl::Exit(ExitReason::UserRequested));
         }
+        if crate::terminal_palette::take_colors_changed() {
+            self.backtrack_render_pending = true;
+            self.refresh_status_line();
+        }
         let screen_size = tui.screen_size_for_event(&event)?;
         if !matches!(
             &event,

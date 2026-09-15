@@ -88,7 +88,7 @@ fn best_color_for_color_level(target: (u8, u8, u8), color_level: StdoutColorLeve
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DefaultColors {
     fg: (u8, u8, u8),
     bg: (u8, u8, u8),
@@ -142,6 +142,21 @@ pub(crate) fn set_default_colors_from_startup_probe(
     imp::set_default_colors_from_startup_probe(colors);
 }
 
+static COLORS_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn take_colors_changed() -> bool {
+    COLORS_CHANGED.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+pub(crate) fn update_default_colors(colors: crate::terminal_probe::DefaultColors) -> bool {
+    if !imp::update_default_colors(colors) {
+        return false;
+    }
+    crate::render::highlight::invalidate_terminal_colors();
+    COLORS_CHANGED.store(true, std::sync::atomic::Ordering::Release);
+    true
+}
+
 #[cfg(all(unix, not(test)))]
 mod imp {
     use super::DefaultColors;
@@ -181,6 +196,22 @@ mod imp {
         let cache = default_colors_cache();
         let mut cache = cache.lock().ok()?;
         cache.get_or_init_with(query_default_colors)
+    }
+
+    pub(super) fn update_default_colors(colors: crate::terminal_probe::DefaultColors) -> bool {
+        let Ok(mut cache) = default_colors_cache().lock() else {
+            return false;
+        };
+        let next = DefaultColors {
+            fg: colors.fg,
+            bg: colors.bg,
+        };
+        if cache.value == Some(next) {
+            return false;
+        }
+        cache.value = Some(next);
+        cache.attempted = true;
+        true
     }
 
     pub(super) fn set_default_colors_from_startup_probe(
@@ -252,6 +283,22 @@ mod imp {
         cache.get_or_init_with(query_default_colors)
     }
 
+    pub(super) fn update_default_colors(colors: crate::terminal_probe::DefaultColors) -> bool {
+        let Ok(mut cache) = default_colors_cache().lock() else {
+            return false;
+        };
+        let next = DefaultColors {
+            fg: colors.fg,
+            bg: colors.bg,
+        };
+        if cache.value == Some(next) {
+            return false;
+        }
+        cache.value = Some(next);
+        cache.attempted = true;
+        true
+    }
+
     pub(super) fn set_default_colors_from_startup_probe(
         colors: Option<crate::terminal_probe::DefaultColors>,
     ) {
@@ -277,6 +324,10 @@ mod imp {
 
 #[cfg(not(any(all(unix, not(test)), windows)))]
 mod imp {
+    pub(super) fn update_default_colors(_colors: crate::terminal_probe::DefaultColors) -> bool {
+        false
+    }
+
     use super::DefaultColors;
 
     pub(super) fn default_colors() -> Option<DefaultColors> {

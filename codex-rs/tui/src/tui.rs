@@ -69,6 +69,7 @@ mod input_boundary;
 #[cfg(unix)]
 mod job_control;
 mod keyboard_modes;
+mod palette_refresh;
 #[cfg(all(test, unix))]
 #[path = "tui_panic_tests.rs"]
 mod panic_tests;
@@ -246,6 +247,8 @@ pub fn set_modes() -> Result<()> {
 
     #[cfg(not(windows))]
     let _ = execute!(stdout(), EnableFocusChange);
+    #[cfg(unix)]
+    let _ = stdout().write_all(b"\x1b[?2031h").and_then(|()| stdout().flush());
     #[cfg(windows)]
     let _ = execute!(stdout(), DisableFocusChange);
     Ok(())
@@ -320,6 +323,8 @@ fn restore_common(
         first_error.get_or_insert(err);
     }
     let _ = execute!(stdout(), DisableFocusChange);
+    #[cfg(unix)]
+    let _ = stdout().write_all(b"\x1b[?2031l").and_then(|()| stdout().flush());
     if matches!(raw_mode_restore, RawModeRestore::Disable)
         && let Err(err) = disable_raw_mode()
     {

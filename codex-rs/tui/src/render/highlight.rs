@@ -257,6 +257,11 @@ pub(crate) fn set_syntax_theme(theme: Theme) {
     THEME_REVISION.fetch_add(1, Ordering::Release);
 }
 
+/// Invalidate rendered styles after terminal colors change, preserving the selected syntax theme.
+pub(crate) fn invalidate_terminal_colors() {
+    THEME_REVISION.fetch_add(1, Ordering::Release);
+}
+
 /// Return the revision of the active syntax theme for rendered-content caches.
 pub(crate) fn syntax_theme_revision() -> u64 {
     THEME_REVISION.load(Ordering::Acquire)
