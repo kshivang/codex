@@ -184,9 +184,11 @@ fn composer_style_follows_both_theme_directions_with_draft_intact() {
             height: 1,
         };
         let mut buffer = Buffer::empty(area);
-        Paragraph::new(draft.as_str())
-            .style(crate::style::user_message_style_for(Some(updated.bg)))
-            .render(area, &mut buffer);
+        crate::terminal_palette::with_test_default_colors(updated, || {
+            Paragraph::new(draft.as_str())
+                .style(crate::style::user_message_style())
+                .render(area, &mut buffer);
+        });
         frames.push(buffer);
     }
     assert_eq!(draft, "my draft");

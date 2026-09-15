@@ -248,7 +248,9 @@ pub fn set_modes() -> Result<()> {
     #[cfg(not(windows))]
     let _ = execute!(stdout(), EnableFocusChange);
     #[cfg(unix)]
-    let _ = stdout().write_all(b"\x1b[?2031h").and_then(|()| stdout().flush());
+    let _ = stdout()
+        .write_all(b"\x1b[?2031h")
+        .and_then(|()| stdout().flush());
     #[cfg(windows)]
     let _ = execute!(stdout(), DisableFocusChange);
     Ok(())
@@ -324,7 +326,9 @@ fn restore_common(
     }
     let _ = execute!(stdout(), DisableFocusChange);
     #[cfg(unix)]
-    let _ = stdout().write_all(b"\x1b[?2031l").and_then(|()| stdout().flush());
+    let _ = stdout()
+        .write_all(b"\x1b[?2031l")
+        .and_then(|()| stdout().flush());
     if matches!(raw_mode_restore, RawModeRestore::Disable)
         && let Err(err) = disable_raw_mode()
     {

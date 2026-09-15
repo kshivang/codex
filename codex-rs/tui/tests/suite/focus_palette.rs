@@ -261,12 +261,12 @@ impl PtyCodex {
         while focus_started.elapsed() < FOCUS_INPUT_TIMEOUT {
             self.read_output(Duration::from_millis(/*millis*/ 20))?;
             let focus_output = &self.output[startup_output_len..];
-            ensure!(
-                !contains_bytes(focus_output, b"\x1b]10;?")
-                    && !contains_bytes(focus_output, b"\x1b]11;?"),
-                "focus regain queried terminal colors after the startup palette was cached",
-            );
             if self.screen_contains(input) {
+                ensure!(
+                    contains_bytes(focus_output, b"\x1b]10;?")
+                        && contains_bytes(focus_output, b"\x1b]11;?"),
+                    "focus regain did not request refreshed terminal colors",
+                );
                 return Ok(());
             }
         }
