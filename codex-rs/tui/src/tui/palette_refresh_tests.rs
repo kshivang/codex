@@ -162,14 +162,14 @@ fn composer_style_follows_both_theme_directions_with_draft_intact() {
             now,
             &mut output,
         );
-        if index == 0 {
-            if let Some(PaletteEvent::Input(Event::Paste(text))) = refresh.observe(
+        if index == 0
+            && let Some(PaletteEvent::Input(Event::Paste(text))) = refresh.observe(
                 EventWithColor::Event(Event::Paste("my draft".into())),
                 now,
                 &mut output,
-            ) {
-                draft.push_str(&text);
-            }
+            )
+        {
+            draft.push_str(&text);
         }
         refresh.observe(report(/*slot*/ 10, Some(color.fg)), now, &mut output);
         let Some(PaletteEvent::Colors(updated)) =

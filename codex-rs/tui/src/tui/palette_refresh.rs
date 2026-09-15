@@ -76,9 +76,7 @@ impl PaletteRefresh {
                 return None;
             }
         };
-        let Some(pending) = self.pending.as_mut() else {
-            return None;
-        };
+        let pending = self.pending.as_mut()?;
         if slot == 10 {
             pending.fg = Some(rgb);
         } else {
